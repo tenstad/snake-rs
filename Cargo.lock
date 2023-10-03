@@ -288,13 +288,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bevy1"
-version = "0.1.0"
-dependencies = [
- "bevy",
-]
-
-[[package]]
 name = "bevy_a11y"
 version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2844,6 +2837,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "74212e6bbe9a4352329b2f68ba3130c15a3f26fe88ff22dbdc6cdd58fa85e99c"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "snake-rs"
+version = "0.1.0"
+dependencies = [
+ "bevy",
 ]
 
 [[package]]
