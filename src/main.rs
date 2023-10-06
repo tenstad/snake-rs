@@ -1,9 +1,16 @@
 use bevy::{core_pipeline::clear_color::ClearColorConfig, prelude::*};
+use rand::Rng;
 
+const TICK_INTERVAL: f32 = 0.15;
 const BLOCK_SIZE: i64 = 32;
 const GAP_SIZE: i64 = 2;
-const TICK_INTERVAL: f32 = 0.15;
-const GROW_INTERVAL: f32 = 0.8;
+const FOOD_SIZE: i64 = 24;
+const FOOD_INTERVAL: f32 = 1.00;
+const FOOD_MAX_COUNT: usize = 4;
+
+const SNAKE_COLOR: Color = Color::rgb(169.0 / 255.0, 224.0 / 255.0, 0.0 / 255.0);
+const FOOD_COLOR: Color = Color::rgb(224.0 / 255.0, 45.0 / 255.0, 0.0 / 255.0);
+const BG_COLOR: Color = Color::rgb(100.0 / 255.0, 157.0 / 255.0, 0.0 / 255.0);
 
 #[derive(Resource)]
 struct TickTimer(Timer);
@@ -20,7 +27,7 @@ enum Dir {
 }
 
 impl Dir {
-    fn opposite(&self) -> Dir {
+    fn rev(&self) -> Dir {
         match self {
             Dir::Right => Dir::Left,
             Dir::Up => Dir::Down,
@@ -30,13 +37,19 @@ impl Dir {
     }
 }
 
-#[derive(Component)]
+#[derive(Component, Clone, PartialEq)]
 struct Pos {
     x: i64,
     y: i64,
 }
 
 impl Pos {
+    fn random() -> Self {
+        let x = rand::thread_rng().gen_range(-16..16);
+        let y = rand::thread_rng().gen_range(-10..10);
+        Self { x, y }
+    }
+
     fn move_dir(&mut self, dir: &Dir) {
         match dir {
             Dir::Right => self.x += 1,
@@ -50,24 +63,26 @@ impl Pos {
         self.x = target.x;
         self.y = target.y;
     }
+}
 
-    fn translate(&self, transform: &mut Transform) {
-        transform.translation.x = (self.x * (BLOCK_SIZE + GAP_SIZE)) as f32;
-        transform.translation.y = (-self.y * (BLOCK_SIZE + GAP_SIZE)) as f32;
-    }
+struct Spr {}
 
-    fn sprite(&self) -> SpriteBundle {
-        let mut transform = Transform::default();
-        self.translate(&mut transform);
+impl Spr {
+    fn new(size: i64, color: Color) -> SpriteBundle {
         SpriteBundle {
             sprite: Sprite {
-                color: Color::rgb(0.0, 0.0, 0.0),
-                custom_size: Some(Vec2::new(BLOCK_SIZE as f32, BLOCK_SIZE as f32)),
+                color,
+                custom_size: Some(Vec2::new(size as f32, size as f32)),
                 ..Default::default()
             },
-            transform,
+            visibility: Visibility::Hidden,
             ..Default::default()
         }
+    }
+
+    fn translate(pos: &Pos, transform: &mut Transform) {
+        transform.translation.x = (pos.x * (BLOCK_SIZE + GAP_SIZE)) as f32;
+        transform.translation.y = (-pos.y * (BLOCK_SIZE + GAP_SIZE)) as f32;
     }
 }
 
@@ -82,24 +97,25 @@ struct Snake {
 struct Body {
     move_countdown: u64,
 }
+#[derive(Component)]
+struct Food {}
 
 fn init(mut commands: Commands) {
     commands.spawn(Camera2dBundle {
         camera_2d: Camera2d {
-            clear_color: ClearColorConfig::Custom(Color::rgb(169.0 / 255.0, 224.0 / 255.0, 0.0)),
+            clear_color: ClearColorConfig::Custom(BG_COLOR),
         },
         ..Default::default()
     });
 
-    let pos = Pos { x: 0, y: 0 };
     commands.spawn((
         Snake {
             dir: Dir::Right,
             next_dir: Dir::Right,
             lenght: 0,
         },
-        pos.sprite(),
-        pos,
+        Pos { x: 0, y: 0 },
+        Spr::new(BLOCK_SIZE, SNAKE_COLOR),
     ));
 }
 
@@ -107,15 +123,16 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_systems(Startup, init)
-        .add_systems(PreUpdate, tick)
-        .add_systems(Update, (input, movement))
-        .add_systems(PostUpdate, (grow, translate_sprites, log))
+        .add_systems(First, input)
+        .add_systems(PreUpdate, (tick, movement, translate_sprites))
+        .add_systems(Update, (food, collide))
+        .add_systems(PostUpdate, (log,))
         .insert_resource(TickTimer(Timer::from_seconds(
             TICK_INTERVAL,
             TimerMode::Repeating,
         )))
         .insert_resource(FoodTimer(Timer::from_seconds(
-            GROW_INTERVAL,
+            FOOD_INTERVAL,
             TimerMode::Repeating,
         )))
         .run();
@@ -126,7 +143,7 @@ fn tick(time: Res<Time>, mut timer: ResMut<TickTimer>) {
 }
 
 fn input(mut snakes: Query<&mut Snake>, input: Res<Input<KeyCode>>) {
-    let dir = match (
+    if let Some(dir) = match (
         input.pressed(KeyCode::Up) || input.pressed(KeyCode::W),
         input.pressed(KeyCode::Down) || input.pressed(KeyCode::S),
         input.pressed(KeyCode::Left) || input.pressed(KeyCode::A),
@@ -137,12 +154,10 @@ fn input(mut snakes: Query<&mut Snake>, input: Res<Input<KeyCode>>) {
         (_, _, true, false) => Some(Dir::Left),
         (_, _, false, true) => Some(Dir::Right),
         _ => None,
-    };
-
-    if let Some(d) = dir {
+    } {
         for mut snake in snakes.iter_mut() {
-            if d != snake.dir.opposite() {
-                snake.next_dir = d.clone();
+            if dir != snake.dir.rev() {
+                snake.next_dir = dir.clone();
             }
         }
     }
@@ -171,39 +186,69 @@ fn movement(
     }
 }
 
-fn grow(
+fn food(
     mut commands: Commands,
     time: Res<Time>,
     mut timer: ResMut<FoodTimer>,
+    stuff: Query<&Pos>,
+    food: Query<&Food>,
+) {
+    if timer.0.just_finished() && food.iter().len() < FOOD_MAX_COUNT {
+        for _attempt in 0..5 {
+            let pos = Pos::random();
+            let mut collision = false;
+            for p in stuff.iter() {
+                if p == &pos {
+                    collision = true;
+                    break;
+                }
+            }
+            if !collision {
+                timer.0.tick(time.delta());
+                commands.spawn((Food {}, pos, Spr::new(FOOD_SIZE, FOOD_COLOR)));
+                break;
+            }
+        }
+    } else {
+        timer.0.tick(time.delta());
+    }
+}
+
+fn collide(
+    mut commands: Commands,
     mut snakes: Query<(&mut Snake, &mut Pos)>,
     mut segments: Query<&mut Body>,
+    mut foods: Query<(Entity, &Food, &Pos), Without<Snake>>,
 ) {
-    if timer.0.tick(time.delta()).just_finished() {
-        for mut segment in segments.iter_mut() {
-            segment.move_countdown += 1
-        }
+    for (mut snake, head) in snakes.iter_mut() {
+        for (food, _, food_pos) in foods.iter_mut() {
+            if head.as_ref() == food_pos {
+                for mut segment in segments.iter_mut() {
+                    segment.move_countdown += 1
+                }
 
-        for (mut snake, head) in snakes.iter_mut() {
-            let pos = Pos {
-                x: head.x,
-                y: head.y,
-            };
-            commands.spawn((
-                Body {
-                    move_countdown: snake.lenght + 1,
-                },
-                pos.sprite(),
-                pos,
-            ));
-            snake.lenght += 1;
+                commands.entity(food).despawn();
+                commands.spawn((
+                    Body {
+                        move_countdown: snake.lenght + 1,
+                    },
+                    head.clone(),
+                    Spr::new(BLOCK_SIZE, SNAKE_COLOR),
+                ));
+                snake.lenght += 1;
+            }
         }
     }
 }
 
-fn translate_sprites(timer: ResMut<TickTimer>, mut query: Query<(&Pos, &mut Transform)>) {
+fn translate_sprites(
+    timer: ResMut<TickTimer>,
+    mut query: Query<(&Pos, &mut Transform, &mut Visibility), With<Sprite>>,
+) {
     if timer.0.just_finished() {
-        for (pos, mut transform) in query.iter_mut() {
-            pos.translate(&mut transform)
+        for (pos, mut transform, mut visibility) in query.iter_mut() {
+            Spr::translate(pos, &mut transform);
+            *visibility = Visibility::Visible;
         }
     }
 }
