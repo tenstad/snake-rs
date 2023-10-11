@@ -125,7 +125,7 @@ fn main() {
         .add_systems(Startup, init)
         .add_systems(First, input)
         .add_systems(PreUpdate, (tick, movement, translate_sprites))
-        .add_systems(Update, (food, collide))
+        .add_systems(Update, (spawn_food, eat_food))
         .add_systems(PostUpdate, (log,))
         .insert_resource(TickTimer(Timer::from_seconds(
             TICK_INTERVAL,
@@ -164,12 +164,13 @@ fn input(mut snakes: Query<&mut Snake>, input: Res<Input<KeyCode>>) {
 }
 
 fn movement(
+    mut commands: Commands,
     timer: Res<TickTimer>,
     mut snakes: Query<(&mut Snake, &mut Pos)>,
-    mut segments: Query<(&mut Body, &mut Pos), Without<Snake>>,
+    mut segments: Query<(Entity, &mut Body, &mut Pos), Without<Snake>>,
 ) {
     if timer.0.just_finished() {
-        for (mut segment, mut pos) in segments.iter_mut() {
+        for (_, mut segment, mut pos) in segments.iter_mut() {
             if segment.move_countdown > 0 {
                 segment.move_countdown -= 1;
             } else {
@@ -182,11 +183,25 @@ fn movement(
         for (mut snake, mut head) in snakes.iter_mut() {
             head.move_dir(&snake.next_dir);
             snake.dir = snake.next_dir.clone();
+
+            let mut dead = false;
+            for (_, _, pos) in segments.iter_mut() {
+                if head.clone() == pos.clone() {
+                    dead = true;
+                    break;
+                }
+            }
+            if dead {
+                snake.lenght = 0;
+                for (entity, _, _) in segments.iter_mut() {
+                    commands.entity(entity).despawn();
+                }
+            }
         }
     }
 }
 
-fn food(
+fn spawn_food(
     mut commands: Commands,
     time: Res<Time>,
     mut timer: ResMut<FoodTimer>,
@@ -214,7 +229,7 @@ fn food(
     }
 }
 
-fn collide(
+fn eat_food(
     mut commands: Commands,
     mut snakes: Query<(&mut Snake, &mut Pos)>,
     mut segments: Query<&mut Body>,
