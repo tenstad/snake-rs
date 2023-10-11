@@ -2,6 +2,8 @@ use bevy::{core_pipeline::clear_color::ClearColorConfig, prelude::*};
 use rand::Rng;
 
 const TICK_INTERVAL: f32 = 0.15;
+const GAME_WIDTH: i64 = 12;
+const GAME_HEIGHT: i64 = 12;
 const BLOCK_SIZE: i64 = 32;
 const GAP_SIZE: i64 = 2;
 const FOOD_SIZE: i64 = 24;
@@ -45,8 +47,8 @@ struct Pos {
 
 impl Pos {
     fn random() -> Self {
-        let x = rand::thread_rng().gen_range(-16..16);
-        let y = rand::thread_rng().gen_range(-10..10);
+        let x = rand::thread_rng().gen_range(0..GAME_WIDTH);
+        let y = rand::thread_rng().gen_range(0..GAME_HEIGHT);
         Self { x, y }
     }
 
@@ -56,6 +58,18 @@ impl Pos {
             Dir::Up => self.y -= 1,
             Dir::Left => self.x -= 1,
             Dir::Down => self.y += 1,
+        }
+        if self.x < 0 {
+            self.x = GAME_WIDTH - 1;
+        }
+        if self.x > GAME_WIDTH - 1 {
+            self.x = 0;
+        }
+        if self.y < 0 {
+            self.y = GAME_HEIGHT - 1;
+        }
+        if self.y > GAME_HEIGHT - 1 {
+            self.y = 0;
         }
     }
 
@@ -73,6 +87,7 @@ impl Spr {
             sprite: Sprite {
                 color,
                 custom_size: Some(Vec2::new(size as f32, size as f32)),
+                anchor: bevy::sprite::Anchor::TopLeft,
                 ..Default::default()
             },
             visibility: Visibility::Hidden,
@@ -80,9 +95,17 @@ impl Spr {
         }
     }
 
-    fn translate(pos: &Pos, transform: &mut Transform) {
-        transform.translation.x = (pos.x * (BLOCK_SIZE + GAP_SIZE)) as f32;
-        transform.translation.y = (-pos.y * (BLOCK_SIZE + GAP_SIZE)) as f32;
+    fn translate(pos: &Pos, sprite: &Sprite, transform: &mut Transform) {
+        transform.translation.x =
+            (pos.x * (BLOCK_SIZE + GAP_SIZE) + GAP_SIZE) as f32
+            - (GAME_WIDTH * (BLOCK_SIZE + GAP_SIZE) + GAP_SIZE) as f32 / 2.0;
+        transform.translation.y =
+            (-pos.y * (BLOCK_SIZE + GAP_SIZE) + GAP_SIZE) as f32
+            + (GAME_HEIGHT * (BLOCK_SIZE + GAP_SIZE) - 3*GAP_SIZE) as f32 / 2.0;
+        if let Some(size) = sprite.custom_size {
+            transform.translation.x += (BLOCK_SIZE as f32 - size.x) / 2.0;
+            transform.translation.y -= (BLOCK_SIZE as f32 - size.y) / 2.0;
+        }
     }
 }
 
@@ -121,7 +144,19 @@ fn init(mut commands: Commands) {
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
+    .add_plugins((
+            DefaultPlugins.set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Snake".into(),
+                    resolution: (
+                        (GAME_WIDTH * (BLOCK_SIZE + GAP_SIZE) + GAP_SIZE) as f32,
+                        (GAME_HEIGHT * (BLOCK_SIZE + GAP_SIZE) + GAP_SIZE) as f32
+                    ).into(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        ))
         .add_systems(Startup, init)
         .add_systems(First, input)
         .add_systems(PreUpdate, (tick, movement, translate_sprites))
@@ -258,17 +293,17 @@ fn eat_food(
 
 fn translate_sprites(
     timer: ResMut<TickTimer>,
-    mut query: Query<(&Pos, &mut Transform, &mut Visibility), With<Sprite>>,
+    mut query: Query<(&Pos, &Sprite, &mut Transform, &mut Visibility), With<Sprite>>,
 ) {
     if timer.0.just_finished() {
-        for (pos, mut transform, mut visibility) in query.iter_mut() {
-            Spr::translate(pos, &mut transform);
+        for (pos, sprite, mut transform, mut visibility) in query.iter_mut() {
+            Spr::translate(pos, sprite, &mut transform);
             *visibility = Visibility::Visible;
         }
     }
 }
 
-fn log(timer: ResMut<TickTimer>, query: Query<&Pos>) {
+fn log(timer: ResMut<TickTimer>, query: Query<&Pos, With<Snake>>) {
     if timer.0.just_finished() {
         for pos in query.iter() {
             println!("{:?} {:?}", pos.x, pos.y);
